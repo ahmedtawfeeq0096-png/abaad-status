@@ -1,0 +1,52 @@
+# Abaad uptime monitor — every 5 minutes against the public health endpoint.
+# Public repo on purpose: scheduled minutes are free/unlimited for public
+# repos (a 5-min cron on a private repo burns ~8,600 billed minutes/month —
+# over 4x the free tier). Nothing here is sensitive: a URL and a status code.
+#
+# Failure → opens an issue (= phone notification). Recovery → comments + closes.
+name: uptime
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Override URL (test the failure path with a bad one)"
+        required: false
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe health endpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OVERRIDE: ${{ inputs.url }}
+        run: |
+          set -u
+          URL="${OVERRIDE:-https://ar.agentlab-iq.com/api/health}"
+          code=000
+          # 3 tries, 15s apart — a single edge blip must not page anyone
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$URL" || echo 000)
+            [ "$code" = "200" ] && break
+            sleep 15
+          done
+          echo "final: HTTP $code ($URL)"
+          open_issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title Abaad down" --json number --jq '.[0].number // empty')
+          if [ "$code" != "200" ]; then
+            if [ -z "$open_issue" ]; then
+              gh issue create --repo "$GITHUB_REPOSITORY" \
+                --title "🔴 Abaad down (HTTP $code)" \
+                --body "health check failed 3x — last HTTP $code at $(date -u +%FT%TZ). URL: $URL"
+            fi
+            exit 1
+          fi
+          if [ -n "$open_issue" ]; then
+            gh issue comment "$open_issue" --repo "$GITHUB_REPOSITORY" --body "✅ recovered at $(date -u +%FT%TZ)"
+            gh issue close "$open_issue" --repo "$GITHUB_REPOSITORY"
+          fi

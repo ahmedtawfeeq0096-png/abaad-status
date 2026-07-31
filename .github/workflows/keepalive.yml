@@ -1,0 +1,25 @@
+# GitHub disables scheduled workflows in repos with no commit activity for 60
+# days. This repo only exists to run a schedule, so it must generate its own
+# heartbeat: a weekly commit updating the timestamp below keeps the cron alive.
+name: keepalive
+on:
+  schedule:
+    - cron: "0 1 * * 1" # Monday 01:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  beat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: heartbeat commit
+        run: |
+          date -u +%FT%TZ > .heartbeat
+          git config user.name "abaad-status-bot"
+          git config user.email "actions@github.com"
+          git add .heartbeat
+          git commit -m "heartbeat $(date -u +%F)" || exit 0
+          git push
